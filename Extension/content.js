@@ -75,7 +75,7 @@
   const COLOR_LS = colors.COLOR_LS || DEFAULTS[mode].COLOR_LS;
 
   // Check if we're in the Tempo iframe
-  const isTempoIframe = window.location.href.includes("app.eu.tempo.io");
+  const IS_TEMPORAL_IFRAME = window.location.href.includes("app.eu.tempo.io");
 
   // Create global variable to store Tempo worklog data
   window.tempoWorklogData = [];
@@ -106,8 +106,238 @@
     window.dispatchEvent(new Event("locationchange"))
   );
 
+  // region "Time Entry Comment Caching"
+
+  const IS_DESCRIPTION_SUGGESTION_ENABLED =
+    settings.isDescriptionSuggestionEnabled ?? true;
+
+  if (IS_DESCRIPTION_SUGGESTION_ENABLED && IS_TEMPORAL_IFRAME) {
+    const DESCRIPTION_SUGGESTION_STORAGE_DAYS =
+      settings.descriptionSuggestionStorageDays || 14;
+    const PAGE_KEY = "tempo_comment_cache";
+    const MAX_AGE_MS =
+      DESCRIPTION_SUGGESTION_STORAGE_DAYS * 24 * 60 * 60 * 1000; // 30 days
+
+    function safeParse(raw) {
+      try {
+        return raw ? JSON.parse(raw) : [];
+      } catch (e) {
+        console.warn("[tempo-cache] failed to parse cache, resetting:", e);
+        return [];
+      }
+    }
+
+    function loadCache() {
+      try {
+        const raw = localStorage.getItem(PAGE_KEY);
+        return safeParse(raw);
+      } catch (e) {
+        console.warn("[tempo-cache] load failed:", e);
+        return [];
+      }
+    }
+
+    function saveCache(entries) {
+      try {
+        localStorage.setItem(PAGE_KEY, JSON.stringify(entries));
+      } catch (e) {
+        console.warn("[tempo-cache] save failed:", e);
+      }
+    }
+
+    function clearCache() {
+      try {
+        localStorage.setItem(PAGE_KEY, JSON.stringify([]));
+      } catch (e) {
+        console.warn("[tempo-cache] clear failed:", e);
+        return false;
+      }
+      return true;
+    }
+
+    // Attach to the API and create a console-friendly alias
+    window.clearTempoCommentCache = clearCache;
+
+    function purgeOldEntries(entries) {
+      const cutoff = Date.now() - MAX_AGE_MS;
+      const filtered = entries.filter((e) => {
+        // Use lastUsed if present
+        const t = e.lastUsed || 0;
+        return t >= cutoff;
+      });
+      if (filtered.length !== entries.length) {
+        saveCache(filtered);
+      }
+      return filtered;
+    }
+
+    // Convenience method: add a comment (increment count if exists)
+    function addTimeEntryComment(comment, projectNumber) {
+      if (!comment || typeof comment !== "string") return null;
+      const normalized = comment.trim();
+      if (normalized.length === 0) return null;
+
+      const now = Date.now();
+      const entries = loadCache();
+      const idx = entries.findIndex((e) => e.comment === normalized);
+
+      let entry;
+      if (idx !== -1) {
+        entry = entries[idx];
+        entry.count = (entry.count || 0) + 1;
+        entry.lastUsed = now;
+        entries[idx] = entry;
+      } else {
+        entry = {
+          comment: normalized,
+          count: 1,
+          lastUsed: now,
+          projectNumber: projectNumber,
+        };
+        entries.push(entry);
+      }
+
+      saveCache(entries);
+      return entry;
+    }
+
+    // Convenience method: list all comments ordered by count (desc)
+    function listTimeEntryComments() {
+      const entries = loadCache();
+      // return a shallow copy sorted by count desc then lastUsed desc
+      return entries.slice().sort((a, b) => {
+        const countA = a.count || 0;
+        const countB = b.count || 0;
+        if (countB !== countA) return countB - countA;
+        return (b.lastUsed || 0) - (a.lastUsed || 0);
+      });
+    }
+
+    // Purge on load
+    saveCache(purgeOldEntries(loadCache()));
+
+    function addCommentEntrySelect(issueInputField) {
+      if (!issueInputField) {
+        console.error("[tempo-addCommentEntrySelect] no input field found");
+        return;
+      }
+
+      // Create new select element for current project
+      if (document.getElementById("tempoCommentSelect")) {
+        document.getElementById("tempoCommentSelect").remove();
+      }
+
+      const worklogCommentField = document.getElementById("commentField");
+      const issueInput = issueInputField.value.trim();
+      const projectNumber = issueInput.substring(0, issueInput.indexOf(" "));
+
+      if (worklogCommentField && projectNumber) {
+        worklogCommentField.parentElement.style.flexDirection = "column";
+
+        const commentSelect = document.createElement("select");
+        commentSelect.id = "tempoCommentSelect";
+        commentSelect.style.display = "block";
+        commentSelect.style.marginBottom = "6px";
+        commentSelect.style.padding = "8px";
+
+        const placeholder = document.createElement("option");
+        placeholder.value = "";
+        placeholder.textContent = "Select recent comment";
+        placeholder.disabled = true;
+        placeholder.selected = true;
+        commentSelect.appendChild(placeholder);
+
+        listTimeEntryComments()
+          .filter((entry) => {
+            return entry.projectNumber.startsWith(projectNumber);
+          })
+          .forEach((e) => {
+            const opt = document.createElement("option");
+            opt.value = e.comment;
+            opt.textContent = `${e.comment} (${e.count || 0})`;
+            commentSelect.appendChild(opt);
+          });
+
+        if (worklogCommentField.parentElement) {
+          worklogCommentField.parentElement.insertBefore(
+            commentSelect,
+            worklogCommentField
+          );
+        }
+
+        commentSelect.addEventListener("change", () => {
+          // Shenanigans to properly set the value and trigger any listeners for React
+          const setter = Object.getOwnPropertyDescriptor(
+            window.HTMLTextAreaElement.prototype,
+            "value"
+          ).set;
+          setter.call(worklogCommentField, commentSelect.value);
+
+          worklogCommentField.dispatchEvent(
+            new Event("input", { bubbles: true, cancelable: true })
+          );
+        });
+
+        // time log get's updated
+        document.getElementById("logTimeBtn").addEventListener("click", () => {
+          if (
+            issueInputField &&
+            worklogCommentField &&
+            worklogCommentField.value.trim()
+          ) {
+            addTimeEntryComment(
+              worklogCommentField.value.trim(),
+              projectNumber
+            );
+            setupModalObserver();
+          }
+        });
+      }
+    }
+
+    function callOnValueChanged(elementId, callback) {
+      const checkContent = () => {
+        const el = document.getElementById(elementId);
+
+        if (el && el.value && el.value.trim().length > 0) {
+          const value = el.value.trim();
+
+          if (!el.__last_value) {
+            callback(el);
+          } else if (value !== el.__last_value) {
+            callback(el);
+          }
+          el.__last_value = value;
+        }
+      };
+
+      setInterval(checkContent, 50);
+    }
+
+    function setupModalObserver() {
+      waitForElement(
+        "#form-issue-input",
+        (elements) => {
+          if (elements && elements.length) {
+            // We need to do a poll approach, as no listener seems to work reliably here
+            // This might be to the reason that there is always a new input field created
+            callOnValueChanged("form-issue-input", () => {
+              addCommentEntrySelect(
+                document.getElementById("form-issue-input")
+              );
+            });
+          }
+        },
+        Number.MAX_VALUE
+      );
+    }
+    setupModalObserver();
+  }
+
+  // endregion "Time Entry Comment Caching"
+
   // Only listen for location changes in the Tempo iframe
-  if (isTempoIframe) {
+  if (IS_TEMPORAL_IFRAME) {
     window.addEventListener("locationchange", onWeekChangedInIframe);
 
     // Set up MutationObserver to watch for DOM changes
@@ -280,11 +510,7 @@
           'div a[href^="https://timetoactgroup.atlassian.net/browse/"]'
         );
 
-        console.log("1");
-        console.log(link);
-
         if (link) {
-          console.log("1.1");
           // Create a new <span> element
           const span = document.createElement("span");
 
@@ -301,11 +527,7 @@
           "customCommentSpan" + worklogId
         );
 
-        console.log("2");
-        console.log(comment);
-
         if (comment) {
-          console.log("2.1");
           const commentParent = comment.parentElement;
 
           const link = document.createElement("a");
@@ -364,7 +586,7 @@
   }
 
   // Only set up XHR interception in the Tempo iframe
-  if (isTempoIframe) {
+  if (IS_TEMPORAL_IFRAME) {
     // Intercept XMLHttpRequest
     const origOpen = XMLHttpRequest.prototype.open;
     const origSend = XMLHttpRequest.prototype.send;

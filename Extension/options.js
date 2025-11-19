@@ -1,8 +1,20 @@
-const darkModeToggle = document.getElementById("darkModeToggle");
 const colorInputs = document.querySelectorAll("input[type='color']");
 const saveBtn = document.getElementById("save");
 const resetBtn = document.getElementById("reset");
-const modeIndicator = document.getElementById("modeIndicator");
+const darkModeToggle = document.getElementById("darkModeToggle");
+const darkModeIndicator = document.getElementById("darkModeIndicator");
+const descriptionSuggestionToggle = document.getElementById(
+  "descriptionSuggestionToggle"
+);
+const descriptionSuggestionModeIndicator = document.getElementById(
+  "descriptionSuggestionModeIndicator"
+);
+const descriptionSuggestionStorageDays = document.getElementById(
+  "descriptionSuggestionStorageDays"
+);
+const descriptionSuggestionStorageDaysInput = document.getElementById(
+  "descriptionSuggestionStorageDaysInput"
+);
 
 // Default colors
 const DEFAULTS = {
@@ -32,15 +44,25 @@ async function loadSettings() {
     stored.isDarkMode ??
     window.matchMedia("(prefers-color-scheme: dark)").matches;
   const mode = isDarkMode ? "dark" : "light";
+  const descriptionSuggestionMode = stored.descriptionSuggestionMode ?? true;
+  descriptionSuggestionStorageDaysInput.value =
+    stored.descriptionSuggestionStorageDays || 14;
 
   darkModeToggle.checked = isDarkMode;
+  descriptionSuggestionToggle.checked = descriptionSuggestionMode;
 
   // Update mode indicator
-  if (modeIndicator) {
-    modeIndicator.textContent = `(Currently editing ${mode} mode colors)`;
+  if (darkModeIndicator) {
+    darkModeIndicator.textContent = `(Currently editing ${mode} mode colors)`;
   }
 
   const colors = stored.colors?.[mode] || DEFAULTS[mode];
+
+  if (!descriptionSuggestionMode) {
+    descriptionSuggestionStorageDays.style.display = "none";
+  } else {
+    descriptionSuggestionStorageDays.style.display = "block";
+  }
 
   // Fill color pickers
   for (const id in DEFAULTS[mode]) {
@@ -66,9 +88,7 @@ async function saveSettings() {
 
 // Reset to default colors
 async function resetSettings() {
-  if (
-    !confirm("Are you sure you want to reset all colors to default values?")
-  ) {
+  if (!confirm("Are you sure you want to reset all values?")) {
     return;
   }
 
@@ -80,6 +100,13 @@ async function resetSettings() {
 
   if (stored.colors) {
     delete stored.colors[mode];
+  }
+
+  if (stored.isDescriptionSuggestionEnabled)
+    delete stored.isDescriptionSuggestionEnabled;
+
+  if (stored.descriptionSuggestionStorageDays) {
+    delete stored.descriptionSuggestionStorageDays;
   }
 
   await browser.storage.local.set({ settings: stored });
@@ -100,7 +127,36 @@ async function handleDarkModeToggle() {
   await loadSettings();
 }
 
+async function handleDescriptionSuggestionToggle() {
+  const result = await browser.storage.local.get("settings");
+  const stored = result.settings || {};
+  stored.isDescriptionSuggestionEnabled = descriptionSuggestionToggle.checked;
+  await browser.storage.local.set({ settings: stored });
+
+  if (!descriptionSuggestionToggle.checked) {
+    descriptionSuggestionStorageDays.style.display = "none";
+  } else {
+    descriptionSuggestionStorageDays.style.display = "block";
+  }
+}
+
+async function handleDescriptionSuggestionDaysChanged() {
+  const result = await browser.storage.local.get("settings");
+  const stored = result.settings || {};
+  const days = parseInt(descriptionSuggestionStorageDaysInput.value);
+  stored.descriptionSuggestionStorageDays = days;
+  await browser.storage.local.set({ settings: stored });
+}
+
 darkModeToggle.addEventListener("change", handleDarkModeToggle);
+descriptionSuggestionToggle.addEventListener(
+  "change",
+  handleDescriptionSuggestionToggle
+);
+descriptionSuggestionStorageDaysInput.addEventListener(
+  "change",
+  handleDescriptionSuggestionDaysChanged
+);
 resetBtn.addEventListener("click", resetSettings);
 
 // Auto-save when any color input changes
