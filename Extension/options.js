@@ -44,7 +44,8 @@ async function loadSettings() {
     stored.isDarkMode ??
     window.matchMedia("(prefers-color-scheme: dark)").matches;
   const mode = isDarkMode ? "dark" : "light";
-  const descriptionSuggestionMode = stored.descriptionSuggestionMode ?? true;
+  const descriptionSuggestionMode =
+    stored.isDescriptionSuggestionEnabled ?? true;
   descriptionSuggestionStorageDaysInput.value =
     stored.descriptionSuggestionStorageDays || 14;
 
