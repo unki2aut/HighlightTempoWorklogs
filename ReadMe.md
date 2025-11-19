@@ -21,6 +21,10 @@ This helps you quickly visualize which worklogs are:
 
 It also helps you to keep track of what you did in worklogs that are too small to display their description text by replacing the project key (e.g.: "TGA1234-12") with the description. This will likely affect logs that are 1h or less but above 15m, since these are too small.
 
+### Added in version 1.3:
+
+A dropdown above the comment/description section of the worklog popup will appear and previously given comments will be selectable for the user for easy input of recurring comments. The duration of how long the comments will be saved is adjustable and the whole feature can be disabled in the extension settings page or at the top of the script.js with `IS_DESCRIPTION_SUGGESTION_ENABLED` and `DESCRIPTION_SUGGESTION_STORAGE_DAYS`.
+
 ## ⚙️ Installation Guide
 
 ### 🔹 Firefox
